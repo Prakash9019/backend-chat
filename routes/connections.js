@@ -1,7 +1,6 @@
-import express from "express";
-import Connection from "../models/Connection.js"; 
-import User from "../models/User.js"; 
-import { io } from "../server.js"; 
+const express = require("express");
+const Connection = require("../models/Connection.js");
+
 
 const router = express.Router();
 router.post("/request", async (req, res) => {
@@ -58,6 +57,7 @@ router.post("/accept", async (req, res) => {
     if (!updatedRequest) {
       return res.status(400).json({ message: "Request not found!" });
     }
+    const io = req.app.get('io');
     io.to(senderId).emit("friendRequestAccepted", { senderId, receiverId });
     io.to(receiverId).emit("friendRequestAccepted", { senderId, receiverId });
 
@@ -80,7 +80,7 @@ router.post("/reject", async (req, res) => {
     if (!deletedRequest) {
       return res.status(400).json({ message: "Request not found!" });
     }
-
+    const io = req.app.get('io');
     io.to(senderId).emit("friendRequestRejected", { senderId, receiverId });
 
     res.status(200).json({ message: "Friend request rejected!" });
@@ -112,4 +112,5 @@ router.get("/status/:userId/:recipientId", async (req, res) => {
   }
 });
 
-export default router;
+
+module.exports = router;
