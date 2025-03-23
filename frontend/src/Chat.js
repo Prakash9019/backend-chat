@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import axios from "axios";
 
@@ -9,7 +9,28 @@ const Chat = ({ user, recipient }) => {
   const [friendRequests, setFriendRequests] = useState([]);
   const [requestSent, setRequestSent] = useState(false);
   const [allMessages, setAllMessages] = useState([]);
-  const [text,setText] = useState("");
+  const [text, setText] = useState("");
+  const [isChatActive, setIsChatActive] = useState(true);
+  const messagesRef = useRef([]);
+  useEffect(() => {
+    messagesRef.current = allMessages;
+  }, [allMessages]);
+  const notifiedMessagesRef = useRef(new Set());
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission !== "granted") {
+      Notification.requestPermission();
+    }
+  }, []);
+  useEffect(() => {
+    const handleFocus = () => setIsChatActive(true);
+    const handleBlur = () => setIsChatActive(false);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, []);
   useEffect(() => {
     if (user?._id) {
       socket.emit("joinRoom", { userId: user._id });
@@ -27,11 +48,11 @@ const Chat = ({ user, recipient }) => {
         console.error("Error fetching messages:", err);
       }
     };
-
     if (isConnected && recipient) {
       fetchMessages();
     }
   }, [user, recipient, isConnected]);
+
   useEffect(() => {
     const checkConnection = async () => {
       try {
@@ -43,69 +64,111 @@ const Chat = ({ user, recipient }) => {
         console.error("Error checking connection:", err);
       }
     };
-
     if (recipient) {
       checkConnection();
     }
   }, [user, recipient]);
-  useEffect(() => {
-
-    socket.on("receiveMessage", (message) => {
-      if (message.receiverId === user._id) {
-        setAllMessages((prev) => [...prev, message]);
-
-        if (message.senderId !== recipient._id) {
-          alert(`New message from ${message.senderId}!`);
-        }
-      }
-    });
-
-    socket.on("friendRequestReceived", (data) => {
-      if (data.receiverId === user._id) {
-        setFriendRequests((prev) => [...prev, data.senderId]);
-      }
-    });
-
-    socket.on("friendRequestAccepted", (data) => {
-      if (data.senderId === user._id || data.receiverId === user._id) {
-        setIsConnected(true);
-      }
-    });
-
-    return () => {
-      socket.off("receiveMessage");
-      socket.off("friendRequestReceived");
-      socket.off("friendRequestAccepted");
-    };
-  }, [user,recipient]);
-
 
   const sendMessage = async () => {
     if (text.trim()) {
       const newMessage = {
         senderId: user._id,
         receiverId: recipient._id,
+        senderName: user.username, // include sender's name
         message: text,
+        createdAt: new Date().toISOString(),
+        isRead: false,
       };
-
       setAllMessages((prev) => [...prev, newMessage]);
       socket.emit("sendMessage", newMessage);
       await axios.post("http://localhost:5000/api/messages", newMessage);
       setText("");
     }
   };
+
+  useEffect(() => {
+    if (isChatActive) {
+      const unreadMessages = allMessages.filter(
+        (msg) => msg.senderId === recipient._id && !msg.isRead
+      );
+      if (unreadMessages.length > 0) {
+        axios
+          .put("http://localhost:5000/api/messages/read", {
+            senderId: recipient._id,
+            receiverId: user._id,
+          })
+          .then(() => {
+            setAllMessages((prev) =>
+              prev.map((msg) =>
+                msg.senderId === recipient._id ? { ...msg, isRead: true } : msg
+              )
+            );
+          })
+          .catch((err) =>
+            console.error("Error marking messages as read:", err)
+          );
+      }
+    }
+  }, [allMessages, isChatActive, recipient, user]);
+
+  useEffect(() => {
+    const handleReadUpdate = (data) => {
+      if (user._id === data.senderId) {
+        setAllMessages((prev) =>
+          prev.map((msg) =>
+            msg.senderId === user._id && msg.receiverId === data.receiverId
+              ? { ...msg, isRead: true }
+              : msg
+          )
+        );
+      }
+    };
+    socket.on("messagesReadUpdated", handleReadUpdate);
+    return () => {
+      socket.off("messagesReadUpdated", handleReadUpdate);
+    };
+  }, [user]);
+
+  useEffect(() => {
+    const handleReceiveMessage = (message) => {
+      if (message.receiverId === user._id) {
+        setAllMessages((prev) => {
+          if (
+            prev.find(
+              (m) =>
+                m.createdAt === message.createdAt &&
+                m.senderId === message.senderId
+            )
+          ) {
+            return prev;
+          }
+          return [...prev, message];
+        });
+        if (message.senderId !== recipient._id) {
+          alert(`New message from ${message.senderName}!`);
+        }
+      }
+    };
+    socket.on("receiveMessage", handleReceiveMessage);
+    return () => {
+      socket.off("receiveMessage", handleReceiveMessage);
+    };
+  }, [user, recipient, isChatActive]);
+
   useEffect(() => {
     const fetchRequests = async () => {
       try {
-        const res = await axios.get(`http://localhost:5000/api/connections/requests/${user._id}`);
+        const res = await axios.get(
+          `http://localhost:5000/api/connections/requests/${user._id}`
+        );
         setFriendRequests(res.data);
       } catch (err) {
         console.error("Error fetching requests:", err);
       }
     };
-
     fetchRequests();
-  }, [user,recipient]);
+  }, [user, recipient]);
+
   const sendFriendRequest = async () => {
     try {
       await axios.post("http://localhost:5000/api/connections/request", {
@@ -118,25 +181,25 @@ const Chat = ({ user, recipient }) => {
       console.error("Error sending request:", err);
     }
   };
+
   const acceptRequest = async (senderId) => {
     try {
       await axios.post("http://localhost:5000/api/connections/accept", {
         senderId,
         receiverId: user._id,
       });
-
       setFriendRequests(friendRequests.filter((req) => req.senderId !== senderId));
       setIsConnected(true);
     } catch (err) {
       console.error("Error accepting request:", err);
     }
   };
+
   const messages = allMessages.filter(
     (msg) =>
       (msg.senderId === user._id && msg.receiverId === recipient._id) ||
       (msg.senderId === recipient._id && msg.receiverId === user._id)
   );
-
 
   return (
     <div style={styles.chatContainer}>
@@ -145,27 +208,52 @@ const Chat = ({ user, recipient }) => {
         friendRequests.map((req) => (
           <div key={req.senderId} style={styles.requestBox}>
             <p>{req.senderId.username} sent you a friend request.</p>
-            <button onClick={() => acceptRequest(req.senderId)} style={styles.acceptButton}>
+            <button
+              onClick={() => acceptRequest(req.senderId)}
+              style={styles.acceptButton}
+            >
               Accept
             </button>
           </div>
         ))}
-
       {isConnected ? (
         <>
-        <p> You are now connected with {recipient.username}. Start chatting!</p>
-        <div style={styles.messagesContainer}>
+          <p>You are now connected with {recipient.username}. Start chatting!</p>
+          <div style={styles.messagesContainer}>
             {messages.length > 0 ? (
               messages.map((msg, index) => (
                 <div
                   key={index}
                   style={{
                     ...styles.messageBubble,
-                    backgroundColor: msg.senderId === user._id ? "green" : "blue",
-                    alignSelf: msg.senderId === user._id ? "flex-start" : "flex-end",
+                    backgroundColor:
+                      msg.senderId === user._id ? "green" : "blue",
+                    alignSelf:
+                      msg.senderId === user._id ? "flex-start" : "flex-end",
                   }}
                 >
-                  <strong>{msg.senderId === user._id ? "Me" : recipient.username}:</strong> {msg.message}
+                  <div>
+                    <strong>
+                      {msg.senderId === user._id ? "Me" : recipient.username}:
+                    </strong>{" "}
+                    {msg.message}
+                  </div>
+                  <div style={styles.timeStamp}>
+                    {msg.createdAt &&
+                      new Date(msg.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                  </div>
+                  {msg.senderId === user._id && (
+                    <div style={styles.readReceipts}>
+                      {msg.isRead ? (
+                        <span style={{ color: "blue" }}>✔✔</span>
+                      ) : (
+                        <span style={{ color: "gray" }}>✔✔</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))
             ) : (
@@ -183,7 +271,7 @@ const Chat = ({ user, recipient }) => {
               Send
             </button>
           </div>
-          </>
+        </>
       ) : (
         !requestSent && (
           <button onClick={sendFriendRequest} style={styles.requestButton}>
@@ -192,11 +280,11 @@ const Chat = ({ user, recipient }) => {
         )
       )}
     </div>
-    
   );
 };
 
 export default Chat;
+
 const styles = {
   chatContainer: {
     maxWidth: "500px",
@@ -223,6 +311,19 @@ const styles = {
     color: "white",
     maxWidth: "70%",
     wordWrap: "break-word",
+    margin: "5px 0",
+    border: "2px solid blue",
+  },
+  timeStamp: {
+    fontSize: "0.8rem",
+    color: "#999",
+    marginTop: "4px",
+    textAlign: "right",
+  },
+  readReceipts: {
+    fontSize: "0.8rem",
+    marginTop: "4px",
+    textAlign: "right",
   },
   inputContainer: {
     display: "flex",
@@ -243,7 +344,24 @@ const styles = {
     color: "white",
     cursor: "pointer",
   },
-  requestBox: { margin: "10px 0", padding: "10px", border: "1px solid #ddd", borderRadius: "5px" },
-  acceptButton: { backgroundColor: "green", color: "white", padding: "5px", border: "none", cursor: "pointer" },
-  requestButton: { backgroundColor: "#007bff", color: "white", padding: "10px", border: "none", cursor: "pointer" },
+  requestBox: {
+    margin: "10px 0",
+    padding: "10px",
+    border: "1px solid #ddd",
+    borderRadius: "5px",
+  },
+  acceptButton: {
+    backgroundColor: "green",
+    color: "white",
+    padding: "5px",
+    border: "none",
+    cursor: "pointer",
+  },
+  requestButton: {
+    backgroundColor: "#007bff",
+    color: "white",
+    padding: "10px",
+    border: "none",
+    cursor: "pointer",
+  },
 };

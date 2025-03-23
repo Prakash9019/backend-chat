@@ -23,14 +23,6 @@ function App() {
     }
   }, [user]);
 
-  // const fetchUsers = async () => {
-  //   try {
-  //     const res = await axios.get("http://localhost:5000/api/auth/users");
-  //     setUsers(res.data);
-  //   } catch (err) {
-  //     console.error("Error fetching users:", err);
-  //   }
-  // };
   const fetchUsers = async () => {
     try {
       console.log("Fetching users...");
@@ -105,7 +97,7 @@ function App() {
         )
       ) : (
         <div>
-          <h2>Welcome, {user.username}</h2>
+          <h2>Welcome {user.username}</h2>
           <button onClick={handleLogout}>Logout</button>
           <h3>Select a user to chat with:</h3>
           {users.length === 0 ? (

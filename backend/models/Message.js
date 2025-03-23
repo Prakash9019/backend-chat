@@ -19,8 +19,12 @@ const MessageSchema = new mongoose.Schema(
       required: true,
       trim: true, 
     },
+    isRead: {
+      type: Boolean,
+      default: false,
+    },
   },
-  { timestamps: true } 
+  { timestamps: true }
 );
 
 export default mongoose.model("Message", MessageSchema);
