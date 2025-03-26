@@ -1,11 +1,11 @@
 const express = require("express");
 const Connection = require("../models/Connection.js");
-
+const Profile = require("../models/profile.js")
 const router = express.Router();
 
 // 📌 Send Friend Request
 router.post("/request", async (req, res) => {
-  const { senderId, receiverId } = req.body;
+  const { senderId, receiverId , newMessage } = req.body;
 
   try {
     // Check if a request already exists
@@ -18,11 +18,16 @@ router.post("/request", async (req, res) => {
     if (existingRequest) {
       return res.status(400).json({ message: "Request already sent!" });
     }
+    const user = await Profile.findOne({ user: senderId })
+    .populate("firstName lastName avatar headline")
 
+    const user2=await Profile.findOne({ user: receiverId })
+    .populate("firstName lastName avatar headline")
+       console.log(user);
     // Create a new friend request
-    const newRequest = new Connection({ senderId, receiverId, status: "pending" });
+    const newRequest = new Connection({ senderId, receiverId, status: "pending",user,user2,newMessage });
     await newRequest.save();
-
+    console.log(newRequest);
     // Notify receiver via WebSocket
     const io = req.app.get("io");
     io.to(receiverId).emit("friendRequestReceived", { senderId });
@@ -40,7 +45,7 @@ router.get("/requests/:userId", async (req, res) => {
     const requests = await Connection.find({
       receiverId: req.params.userId,
       status: "pending",
-    }).populate("senderId", "username");
+    }).populate("user", "firstName lastName avatar headline");
     console.log(requests);
     res.status(200).json(requests);
   } catch (error) {
@@ -52,14 +57,14 @@ router.get("/requests/:userId", async (req, res) => {
 // 📌 Accept Friend Request
 router.post("/accept", async (req, res) => {
   const { senderId, receiverId } = req.body;
-
+   console.log(senderId, receiverId)
   try {
     const updatedRequest = await Connection.findOneAndUpdate(
       { senderId, receiverId, status: "pending" },
       { status: "accepted" },
       { new: true }
     );
-
+   console.log(updatedRequest);
     if (!updatedRequest) {
       return res.status(400).json({ message: "Request not found!" });
     }
@@ -102,28 +107,40 @@ router.post("/reject", async (req, res) => {
   }
 });
 
-
 router.get("/status/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Find all accepted connections where the user is either sender or receiver
+    // Fetch connections and ensure population works correctly
     const connections = await Connection.find({
       $or: [{ senderId: userId }, { receiverId: userId }],
       status: "accepted",
-    }).populate("senderId receiverId", "username");
+    })
+      .populate("senderId", "firstName lastName avatar headline")
+      .populate("receiverId", "firstName lastName avatar headline");
 
-    // Extract the connected user details
-    const connectedUsers = connections.map((conn) =>
-      conn.senderId._id.toString() === userId ? conn.receiverId : conn.senderId
-    );
+    // Extract connected user details
+    const connectedUsers = connections.map((conn) => {
+      if (conn.senderId._id.toString() === userId) {
+        return conn.receiverId; // Return receiver's details
+      } else {
+        return conn.senderId; // Return sender's details
+      }
+    });
 
-    res.status(200).json(connectedUsers);
+
+    // 🔥 Fix: Use find() instead of findOne() to get multiple users
+    const data = await Profile.find({ user: { $in: connectedUsers.map(u => u._id) } });
+
+    
+    res.status(200).json(data);
   } catch (error) {
     console.error("Error fetching connections:", error);
     res.status(500).json({ error: "Server error" });
   }
 });
+
+
 
 
 // 📌 Get Connection Status (Updated)

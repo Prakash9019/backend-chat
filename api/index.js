@@ -9,7 +9,7 @@ const messageRoutes = require("../routes/messages.js");
 const connectionRoutes = require("../routes/connections.js");
 const userRoutes = require("../routes/users.js");
 const Connection = require("../models/Connection.js");
-
+const Message = require("../models/Message.js");
 
 dotenv.config();
 const app = express();
@@ -18,9 +18,10 @@ const io = new Server(server, {
   cors: { origin: "*" } // Adjust for production if needed
 });
 
-app.set('io', io);
 
+app.set('io', io);
 app.use(cors());
+
 app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
@@ -39,70 +40,40 @@ app.put("/api/messages/read", async (req, res) => {
       { $set: { isRead: true } }
     );
     io.to(senderId).emit("messagesReadUpdated", {
-      senderId,   
-      receiverId,   
-      updated: result.nModified,
+      senderId,
+      receiverId,
+      updated: result.modifiedCount, // Corrected field
     });
-    res.json({ updated: result.nModified });
+    res.json({ updated: result.modifiedCount });
+    
   } catch (error) {
     console.error("Error updating read receipts:", error);
     res.status(500).json({ error: "Error updating read receipts" });
   }
 });
 
+
+
 io.on("connection", (socket) => {
+    console.log("User connected:", socket.id);
 
-  socket.on("joinRoom", ({ userId }) => {
-    socket.join(userId);
-    console.log(`${userId} joined their personal chat room.`);
-  });
+    socket.on("joinRoom", ({ userId }) => {
+        socket.join(userId);
+        console.log(`User ${userId} joined their private room`);
+    });
 
-  socket.on("sendRequest", ({ senderId, receiverId }) => {
-    console.log(`Friend request sent from ${senderId} to ${receiverId}`);
-    io.to(receiverId).emit("receiveRequest", { senderId });
-  });
+    socket.on("sendMessage", (message) => {
+        console.log("Message received:", message);
+        io.to(message.receiverId).emit("receiveMessage", message); // Send to receiver
+    });
 
-  socket.on("acceptRequest", ({ senderId, receiverId }) => {
-    console.log(`Friend request accepted by ${receiverId}`);
-    io.to(senderId).emit("requestAccepted", { receiverId });
-  });
+    socket.on("updateMessageStatus", ({ messageId, status }) => {
+        io.emit("messageStatusUpdated", { messageId, status });
+    });
 
-  socket.on("rejectRequest", ({ senderId, receiverId }) => {
-    console.log(`Friend request rejected by ${receiverId}`);
-    io.to(senderId).emit("requestRejected", { receiverId });
-  });
-
-  socket.on("sendMessage", async ({ senderId, receiverId, message, senderName }) => {
-    try {
-      const connection = await Connection.findOne({
-        $or: [
-          { senderId, receiverId, status: "accepted" },
-          { senderId: receiverId, receiverId: senderId, status: "accepted" },
-        ],
-      });
-      if (connection) {
-        const chatMessage = {
-          senderId,
-          receiverId,
-          message,
-          senderName,
-          timestamp: new Date(),
-        };
-        io.to(receiverId).emit("receiveMessage", chatMessage);
-        io.to(senderId).emit("receiveMessage", chatMessage);
-      } else {
-        console.log("Messaging blocked - No connection found");
-      }
-    } catch (error) {
-      console.error("Error sending message:", error);
-    }
-  });
-  
-
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
-    socket.rooms.forEach((room) => socket.leave(room));
-  });
+    socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
+    });
 });
 
 app.get("/", (req, res) => {
