@@ -17,7 +17,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, { 
   cors: { 
-    origin: "http://localhost:5173",  
+    origin: "https://app.govertx.com",  
     methods: ["GET", "POST"],
     credentials: true
   } 
@@ -77,9 +77,35 @@ io.on("connection", (socket) => {
         io.to(message.receiverId).emit("receiveMessage", message); // Send to receiver
     });
 
-    socket.on("updateMessageStatus", ({ messageId, status }) => {
-        io.emit("messageStatusUpdated", { messageId, status });
+    // socket.on("updateMessageStatus", ({ messageId, status }) => {
+    //     io.emit("messageStatusUpdated", { messageId, status });
+    // });
+
+    socket.on("updateMessageStatus", async ({ messageId, status }) => {
+      try {
+        const updatedMessage = await Message.findByIdAndUpdate(
+          messageId,
+          { status },
+          { new: true }
+        );
+    
+        if (updatedMessage) {
+          // Broadcast to both sender and receiver rooms
+          io.to(updatedMessage.senderId.toString()).emit("messageStatusUpdated", {
+            messageId,
+            status
+          });
+    
+          io.to(updatedMessage.receiverId.toString()).emit("messageStatusUpdated", {
+            messageId,
+            status
+          });
+        }
+      } catch (error) {
+        console.error("Error updating message status:", error);
+      }
     });
+  
 
     socket.on("disconnect", () => {
         console.log("User disconnected:", socket.id);

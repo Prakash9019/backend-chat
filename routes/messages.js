@@ -30,5 +30,36 @@ router.get("/:senderId/:receiverId", async (req, res) => {
   }
 });
 
+router.put("/status/:messageId", async (req, res) => {
+  try {
+    const { status } = req.body;
+    const updatedMessage = await Message.findByIdAndUpdate(
+      req.params.messageId,
+      { status },
+      { new: true }
+    );
+
+    // Get the io instance from the app
+    const io = req.app.get('io');
+    
+    // Emit to both sender and receiver
+    if (io) {
+      io.to(updatedMessage.senderId.toString()).emit("messageStatusUpdated", {
+        messageId: updatedMessage._id,
+        status
+      });
+      
+      io.to(updatedMessage.receiverId.toString()).emit("messageStatusUpdated", {
+        messageId: updatedMessage._id,
+        status
+      });
+    }
+
+    res.status(200).json(updatedMessage);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 module.exports = router;
