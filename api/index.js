@@ -15,30 +15,33 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-const io = new Server(server, { 
-  cors: { 
-    origin: "https://app.govertx.com",  
+const io = new Server(server, {
+  cors: {
+    origin: "https://app.govertx.com",
     methods: ["GET", "POST"],
-    credentials: true
-  } 
+    credentials: true,
+  },
 });
 
-
-app.set('io', io);
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
-}));
-
+app.set("io", io);
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/connections", connectionRoutes);
 app.use("/api/users", userRoutes);
+
 mongoose
-  .connect(`mongodb+srv://plsprakash2003:Surya_2003@cluster0.bpe9m.mongodb.net/Cluster0?retryWrites=true&w=majority`)
+  .connect(
+    `mongodb+srv://plsprakash2003:Surya_2003@cluster0.bpe9m.mongodb.net/Cluster0?retryWrites=true&w=majority`
+  )
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.log("MongoDB Connection Error:", err));
 
@@ -52,64 +55,58 @@ app.put("/api/messages/read", async (req, res) => {
     io.to(senderId).emit("messagesReadUpdated", {
       senderId,
       receiverId,
-      updated: result.modifiedCount, // Corrected field
+      updated: result.modifiedCount,
     });
     res.json({ updated: result.modifiedCount });
-    
   } catch (error) {
     console.error("Error updating read receipts:", error);
     res.status(500).json({ error: "Error updating read receipts" });
   }
 });
 
-
-
 io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
+  console.log("User connected:", socket.id);
 
-    socket.on("joinRoom", ({ userId }) => {
-        socket.join(userId);
-        console.log(`User ${userId} joined their private room`);
-    });
+  socket.on("joinRoom", ({ userId }) => {
+    socket.join(userId);
+    console.log(`User ${userId} joined their private room`);
+  });
 
-    socket.on("sendMessage", (message) => {
-        console.log("Message received:", message);
-        io.to(message.receiverId).emit("receiveMessage", message); // Send to receiver
-    });
+  socket.on("sendMessage", (message) => {
+    console.log("Message received:", message);
+    io.to(message.receiverId).emit("receiveMessage", message); // Send to receiver
+  });
 
-    // socket.on("updateMessageStatus", ({ messageId, status }) => {
-    //     io.emit("messageStatusUpdated", { messageId, status });
-    // });
+  socket.on("updateMessageStatus", async ({ messageId, status }) => {
+    try {
+      const updatedMessage = await Message.findByIdAndUpdate(
+        messageId,
+        { status },
+        { new: true }
+      );
 
-    socket.on("updateMessageStatus", async ({ messageId, status }) => {
-      try {
-        const updatedMessage = await Message.findByIdAndUpdate(
+      if (updatedMessage) {        
+        io.to(updatedMessage.senderId.toString()).emit("messageStatusUpdated", {
           messageId,
-          { status },
-          { new: true }
-        );
-    
-        if (updatedMessage) {
-          // Broadcast to both sender and receiver rooms
-          io.to(updatedMessage.senderId.toString()).emit("messageStatusUpdated", {
-            messageId,
-            status
-          });
-    
-          io.to(updatedMessage.receiverId.toString()).emit("messageStatusUpdated", {
-            messageId,
-            status
-          });
-        }
-      } catch (error) {
-        console.error("Error updating message status:", error);
+          status,
+        });
       }
-    });
-  
+    } catch (error) {
+      console.error("Error updating message status:", error);
+    }
+  });
 
-    socket.on("disconnect", () => {
-        console.log("User disconnected:", socket.id);
-    });
+  socket.on("startTyping", ({ senderId, receiverId }) => {
+    io.to(receiverId).emit("typingStarted", senderId);
+  });
+
+  socket.on("stopTyping", ({ senderId, receiverId }) => {
+    io.to(receiverId).emit("typingStopped", senderId);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+  });
 });
 
 app.get("/", (req, res) => {
